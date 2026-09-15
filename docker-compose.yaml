@@ -1,0 +1,93 @@
+services:
+  event-ingest:
+    build: ./event-ingest
+    image: decay0116/event-ingest:1.0
+    ports:
+      - "12000:8000"
+    depends_on:
+      - kafka
+    restart: unless-stopped
+
+  load-generator:
+    image: locustio/locust
+    ports:
+      - "8089:8089"
+    volumes:
+      - ./load-generator:/mnt/locust
+    command: -f /mnt/locust/locustfile.py --host http://event-ingest:8000
+    depends_on:
+      - event-ingest
+
+  event-aggregator:
+    build: ./event-aggregator
+    image: decay0116/event-aggregator:1.0
+    ports:
+      - "12001:8001"
+    depends_on:
+      - kafka
+      - redis
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:latest
+    command: -config.file=/etc/tempo/tempo.yaml
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo/tempo.yaml
+    ports:
+      - "3200:3200"
+      - "4317:4317"
+      - "4318:4318"
+
+  mimir:
+    image: grafana/mimir:latest
+    ports:
+      - "9009:9009"
+    volumes:
+      - ./mimir/mimir.yaml:/etc/mimir/mimir.yaml
+    command: --config.file=/etc/mimir/mimir.yaml
+
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+
+  alloy:
+    image: grafana/alloy:latest
+    ports:
+      - "12345:12345"
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: run --server.http.listen-addr=0.0.0.0:12345 /etc/alloy/config.alloy
+    depends_on:
+      - loki
+
+  kafka:
+    image: apache/kafka:latest
+    container_name: game-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+
+  redis:
+    image: redis:7
+    container_name: game-redis
+    ports:
+      - "6379:6379"
